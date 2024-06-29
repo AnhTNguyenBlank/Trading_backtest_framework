@@ -1,0 +1,5 @@
+IDENTIFIER_ENTRY,DESCRIPTION_ENTRY
+DEAL_ENTRY_IN,Entry in
+DEAL_ENTRY_OUT,Entry out
+DEAL_ENTRY_INOUT,Reverse
+DEAL_ENTRY_OUT_BY,Close a position by an opposite one
