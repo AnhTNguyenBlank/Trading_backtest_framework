@@ -41,9 +41,9 @@ import pytz
 import sys
 
 
-def prepare_df(df, timeframe):
+def prepare_df(df, timeframe, add_indicators):
 
-    assert timeframe in ['1min', '5min', '15min', '1H', '1D']
+    assert timeframe in ['1min', '5min', '15min', '4H', '1D']
 
     if timeframe != '1min':
         df = df.resample(rule = timeframe).agg(
@@ -64,6 +64,7 @@ def prepare_df(df, timeframe):
                                             axis = 1)
     df['LOWER_SHADOW'] = df.apply(lambda x: min(x['OPEN'], x['CLOSE']) - x['LOW'],
                                             axis = 1)
+    df['WHOLE_RANGE'] = df['HIGH'] - df['LOW']
 
     df['FLAG_LONG_UPPER_SHADOW'] = np.where(df['UPPER_SHADOW'] >= df['BODY'], 1, 0)
     df['FLAG_LONG_LOWER_SHADOW'] = np.where(df['LOWER_SHADOW'] >= df['BODY'], 1, 0)
@@ -82,35 +83,38 @@ def prepare_df(df, timeframe):
     df['FLAG_UPTREND_VOL(20)'] = np.where(df['TICK_VOL'] >= df['TICK_VOL'].shift(20), 1, 0)
 
 
-    #RSI
-    df['RSI'] = ta.momentum.RSIIndicator(df['CLOSE'],
-                                            window = 14).rsi()
+    if add_indicators:
+        #RSI
+        df['RSI'] = ta.momentum.RSIIndicator(df['CLOSE'],
+                                                window = 14).rsi()
 
-    df['FLAG_UNDER_30_RSI'] = np.where(df['RSI'] < 30, 1, 0)
-    df['FLAG_OVER_70_RSI'] = np.where(df['RSI'] > 70, 1, 0)
-    df['FLAG_UPTREND_RSI(20)'] = np.where(df['RSI'] >= df['RSI'].shift(20), 1, 0)
-
-    #Exponential moving average
-    df['EMA(50)'] = ta.trend.EMAIndicator(df['CLOSE'],
-                                            window = 50).ema_indicator()
-    df['POSITION_EMA(50)'] = df.apply(lambda x: 1 if x['EMA(50)'] >= x['HIGH']
-                                                                else (2 if x['EMA(50)'] >= max(x['OPEN'], x['CLOSE'])
-                                                                else (3 if x['EMA(50)'] >= min(x['OPEN'], x['CLOSE'])
-                                                                else (4 if x['EMA(50)'] >= x['LOW'] else 5)
-                                                                    )),
-                                                axis = 1)
-
-
-    df['EMA(200)'] = ta.trend.EMAIndicator(df['CLOSE'],
-                                            window = 200).ema_indicator()
-    df['POSITION_EMA(200)'] = df.apply(lambda x: 1 if x['EMA(200)'] >= x['HIGH']
-                                                                else (2 if x['EMA(200)'] >= max(x['OPEN'], x['CLOSE'])
-                                                                else (3 if x['EMA(200)'] >= min(x['OPEN'], x['CLOSE'])
-                                                                else (4 if x['EMA(200)'] >= x['LOW'] else 5)
-                                                                    )),
-                                                axis = 1)
+        df['FLAG_UNDER_30_RSI'] = np.where(df['RSI'] < 30, 1, 0)
+        df['FLAG_OVER_70_RSI'] = np.where(df['RSI'] > 70, 1, 0)
+        df['FLAG_UPTREND_RSI(20)'] = np.where(df['RSI'] >= df['RSI'].shift(20), 1, 0)
+        
+        #Bollinger band
+        df['BB_UPPER_BAND(50)'] = ta.volatility.BollingerBands(df['CLOSE'], window = 50, window_dev = 2).bollinger_hband()
+        df['BB_LOWER_BAND(50)'] = ta.volatility.BollingerBands(df['CLOSE'], window = 50, window_dev = 2).bollinger_lband()
+        
+        #Exponential moving average
+        df['EMA(50)'] = ta.trend.EMAIndicator(df['CLOSE'],
+                                                window = 50).ema_indicator()
+        df['POSITION_EMA(50)'] = df.apply(lambda x: 1 if x['EMA(50)'] >= x['HIGH']
+                                                                    else (2 if x['EMA(50)'] >= max(x['OPEN'], x['CLOSE'])
+                                                                    else (3 if x['EMA(50)'] >= min(x['OPEN'], x['CLOSE'])
+                                                                    else (4 if x['EMA(50)'] >= x['LOW'] else 5)
+                                                                        )),
+                                                    axis = 1)
 
 
+        df['EMA(200)'] = ta.trend.EMAIndicator(df['CLOSE'],
+                                                window = 200).ema_indicator()
+        df['POSITION_EMA(200)'] = df.apply(lambda x: 1 if x['EMA(200)'] >= x['HIGH']
+                                                                    else (2 if x['EMA(200)'] >= max(x['OPEN'], x['CLOSE'])
+                                                                    else (3 if x['EMA(200)'] >= min(x['OPEN'], x['CLOSE'])
+                                                                    else (4 if x['EMA(200)'] >= x['LOW'] else 5)
+                                                                        )),
+                                                    axis = 1)
 
     #returns
     df['Ret(t)'] = 100*(df['CLOSE'] - df['CLOSE'].shift(1))/df['CLOSE'].shift(1)
@@ -130,7 +134,7 @@ def plot_df(df, path, open_tab):
     fig = make_subplots(rows=3,
                         cols=1,
                         shared_xaxes=True,
-                        subplot_titles=('Candlestick with EMA Lines', 'TICK_VOL Chart', 'RSI Chart'),
+                        subplot_titles=('Main Chart', 'TICK_VOL Chart', 'RSI Chart'),
                         row_heights=subplot_heights,
                         column_widths=subplot_widths,
                         vertical_spacing = 0.05,  # Set the spacing between rows
@@ -160,7 +164,18 @@ def plot_df(df, path, open_tab):
                              mode='lines',
                              name='EMA200',
                              line=dict(color='yellow', width = 2))
+    
+    bb_upper = go.Scatter(x=df.index,
+                             y=df['BB_UPPER_BAND(50)'],
+                             mode='lines',
+                             name='BB_UPPER_BAND50',
+                             line=dict(color='white', width = 1))
 
+    bb_lower = go.Scatter(x=df.index,
+                             y=df['BB_LOWER_BAND(50)'],
+                             mode='lines',
+                             name='BB_LOWER_BAND50',
+                             line=dict(color='white', width = 1))
 
     fig.add_trace(cd, row=1, col=1)
     fig.add_trace(ema50,
@@ -169,6 +184,13 @@ def plot_df(df, path, open_tab):
     fig.add_trace(ema200,
                   row=1,
                   col=1)
+    fig.add_trace(bb_upper,
+                  row=1,
+                  col=1)
+    fig.add_trace(bb_lower,
+                  row=1,
+                  col=1)
+    
 
     # Subplot 2: TICK_VOL bar chart
     vol = go.Bar(x=df.index,
@@ -305,265 +327,6 @@ def plot_df(df, path, open_tab):
         gridcolor='grey'
     )
 
-    if path:
-        # Write HTML output
-        fig.write_html(path)
-        url = path
-        if open_tab:
-            webbrowser.open(url, new=2)  # open in new tab
-
-    return(fig)
-
-
-def prepare_df_sr(sr_range, patience_range, patience_time, df_observe):
-
-    cnt = 0
-
-    bins = []
-
-    while df_observe['LOW'].min() + cnt*sr_range <= df_observe['HIGH'].max():
-        bins.append(df_observe['LOW'].min() + cnt*sr_range)
-        cnt += 1
-
-    df_observe['PRICE_RANGE'] = pd.cut(df_observe['AVG_PRICE'], bins = bins)
-
-    price_hist = pd.pivot_table(df_observe.copy(), index = 'PRICE_RANGE', values = 'AVG_PRICE', aggfunc = 'count')
-    price_hist.columns = ['NUM_TOUCH']
-    price_hist['PRICE_RANKING'] = range(1, len(price_hist) + 1, 1)
-    price_hist['CUMULATIVE_TOUCH'] = price_hist['NUM_TOUCH'].cumsum()
-
-    price_hist['PERC_NUM_TOUCH'] = price_hist['NUM_TOUCH']/price_hist['NUM_TOUCH'].sum()*100
-    price_hist['PERC_CUM_NUM_TOUCH'] = price_hist['CUMULATIVE_TOUCH']/price_hist['NUM_TOUCH'].sum()*100
-
-    price_hist = price_hist[['PRICE_RANKING', 'NUM_TOUCH', 'CUMULATIVE_TOUCH', 'PERC_NUM_TOUCH', 'PERC_CUM_NUM_TOUCH']]
-
-
-    #=================== ADJUST POINTS 1 ===================#
-    '''
-    Percentile rank based on the number of times prices touch the range;
-    +0.5 or -0.5 based on patience_range, i.e. +0.5 to ranks that is maximum within patience_range and -1 otherwise
-    --> eliminate the chances that 2 consecutive ranges being support and/or resistance.
-    '''
-    price_hist['RANK_NUM_TOUCH'] = price_hist['PERC_NUM_TOUCH'].rank(method = 'first', pct = True)
-
-    # Create a forward rolling view
-    price_hist['ROLL_RANK_FORWARD'] = price_hist['RANK_NUM_TOUCH'].rolling(window = patience_range).max()
-
-    # Create a backward rolling view by reversing the DataFrame and applying forward rolling
-    price_hist['ROLL_RANK_BACKWARD'] = price_hist[::-1]['RANK_NUM_TOUCH'].rolling(window = patience_range).max()
-    price_hist['ADJUST_POINTS_1'] = np.where((price_hist['ROLL_RANK_FORWARD'] == price_hist['ROLL_RANK_BACKWARD']) &
-                                       (price_hist['RANK_NUM_TOUCH'] > 0) &
-                                       (price_hist['ROLL_RANK_FORWARD'] == price_hist['RANK_NUM_TOUCH']),
-                                    0.5, -1)
-
-    
-    #=================== ADJUST POINTS 2 ===================#
-    '''
-    Points based on the number of times prices REVERT or BREAK OUT of the range;
-    At each time step, flag -1 if price is less than the range, 0 if it is within the range and 1 otherwise;
-    FORWARD_TREND will be sum of the flag over the forward patience_time, and similarly for PREV_TREND;
-    The product between FORWARDTREND and PREV_TREND >= 0 at the time price within the range --> Add 1 points to the range; otherwise -2.
-    '''
-    ranges = price_hist.copy().index
-    
-    for r in ranges:
-        df_observe[r] = df_observe['AVG_PRICE'].apply(lambda x: -1 if x <= r.left
-                                                else (0 if x in r
-                                                        else 1
-                                                        ))
-        # # Create a forward rolling view
-        # df_observe[f'{r}_FORWARD_TREND'] = df_observe[r].rolling(window = patience_time).sum()
-    
-        # # Create a backward rolling view by reversing the DataFrame and applying forward rolling
-        # df_observe[f'{r}_PREV_TREND'] = df_observe[::-1][r].rolling(window = patience_time).sum()
-    
-        # Adjust points 2 based on revert and break out
-        df_observe[f'{r}_REVERT_POINTS'] = np.where((df_observe[r] == 0) & (df_observe[r].rolling(window = patience_time).sum()*df_observe[::-1][r].rolling(window = patience_time).sum() >= 0),
-                                            1,
-                                            -2)
-    
-    adjust2 = pd.DataFrame(df_observe.filter(like = 'REVERT_POINTS').sum().rank(pct = True, method = 'first'))
-    
-    adjust2.index = ranges
-    
-    adjust2.columns = ['ADJUST_POINTS_2']
-    
-    price_hist = pd.concat([price_hist, adjust2], axis = 1)
-    
-    price_hist['SR_SCORE'] = price_hist['RANK_NUM_TOUCH'] + price_hist['ADJUST_POINTS_1'] + price_hist['ADJUST_POINTS_2']
-    price_hist['SR_RANK'] = price_hist['SR_SCORE'].rank(ascending = False)
-    
-    price_hist = price_hist.drop(columns = ['ROLL_RANK_FORWARD', 'ROLL_RANK_BACKWARD'])
-
-    return(price_hist)
-
-
-def plot_sr(df_observe, sr_range, patience_range, patience_time, max_num_sr, cutoff, path, open_tab):
-    price_hist = prepare_df_sr(df_observe = df_observe.copy(),
-                               sr_range = sr_range,
-                               patience_range = patience_range,
-                               patience_time = patience_time)
-
-    fig = plot_df(df_observe.copy(), path = None, open_tab = False)
-
-    for idx, i in enumerate(price_hist.index):
-        if price_hist.loc[i, 'SR_RANK'] <= max_num_sr and price_hist.loc[i, 'SR_SCORE'] >= cutoff:
-            uprange = dict(type='line',
-                                x0=df_observe.index.min(),
-                                x1=df_observe.index.max(),
-                                y0=price_hist.index[idx].right,
-                                y1=price_hist.index[idx].right,
-                                line=dict(color='white', width=1, dash='dash'))
-
-            lowrange = dict(type='line',
-                            x0=df_observe.index.min(),
-                            x1=df_observe.index.max(),
-                            y0=price_hist.index[idx].left,
-                            y1=price_hist.index[idx].left,
-                            line=dict(color='white', width=1, dash='dash'))
-
-            fig.add_shape(uprange,
-                        row=1,
-                        col=1)
-
-            fig.add_shape(lowrange,
-                        row=1,
-                        col=1)
-
-            fig.add_shape(
-                type='rect',
-                x0=df_observe.index.min(),
-                x1=df_observe.index.max(),
-                y0=price_hist.index[idx].left,
-                y1=price_hist.index[idx].right,
-                fillcolor='rgba(200, 160, 255, 0.2)',  # Light purple color with opacity
-                line=dict(color='rgba(255, 255, 255, 0)'),  # Set border color and opacity
-                row=1,
-                col=1
-            )
-
-
-
-    # sum_score = price_hist.loc[(price_hist['SR_RANK'] <= max_num_sr) & (price_hist['SR_SCORE'] >= cutoff), 'SR_SCORE'].sum()
-
-    # fig.add_annotation(
-    # text=sum_score,
-    # x=df_observe.index.min(),  # X-coordinate of the text box
-    # y=df_observe['HIGH'].max(),  # Y-coordinate of the text box
-    # showarrow=True,
-    # arrowhead=7,
-    # ax=0,
-    # ay=-40
-    # )
-
-    if path:
-        # Write HTML output
-        fig.write_html(path)
-        url = path
-        if open_tab:
-            webbrowser.open(url, new=2)  # open in new tab
-
-    return(fig)
-
-
-def sr_score(param, df_observe):
-    price_hist = prepare_df_sr(sr_range = param['sr_range'],
-                    patience_range = param['patience_range'],
-                    patience_time = param['patience_time'],
-                    df_observe = df_observe.copy())
-
-    sum_score = price_hist.loc[(price_hist['SR_RANK'] <= param['max_num_range']) & (price_hist['SR_SCORE'] >= param['cutoff']), 'SR_SCORE'].sum()
-    return(sum_score)
-
-
-def search_sr(df_observe, sr_arr, pr_arr, pt_arr, max_num_arr, cutoff_arr):
-
-    space = {
-        "sr_range": hp.choice("sr_range", sr_arr),
-        "patience_range": hp.choice("patience_range", pr_arr),
-        "patience_time": hp.choice("patience_time", pt_arr),
-        "max_num_range": hp.choice("max_num_range", max_num_arr),
-        "cutoff": hp.choice("cutoff", cutoff_arr)
-    }
-
-
-    def hyperparameter_tuning(params):
-        score = sr_score(params, df_observe.copy())
-        return {"loss": -score, "status": STATUS_OK}
-
-    # Initialize trials object
-    trials = Trials()
-
-    best = fmin(
-        fn=hyperparameter_tuning,
-        space = space,
-        algo=tpe.suggest,
-        max_evals=200,
-        trials=trials
-    )
-
-    best['patience_range'] = pr_arr[best['patience_range']]
-    best['patience_time'] = pt_arr[best['patience_time']]
-    best['max_num_range'] = max_num_arr[best['max_num_range']]
-    best['sr_range'] = sr_arr[best['sr_range']]
-    best['cutoff'] = cutoff_arr[best['cutoff']]
-    
-
-    return(best)
-
-
-def search_extremum(order, df_observe):
-    
-    local_max_indices = argrelmax(data = df_observe.iloc[order: -order, :]['HIGH'].values, axis = 0, order = order)[0]
-    local_min_indices = argrelmin(data = df_observe.iloc[order: -order, :]['LOW'].values, axis = 0, order = order)[0]
-
-    return(local_max_indices, local_min_indices)
-
-
-def plot_extremum(df_observe, order, path, open_tab):
-    local_max_indices, local_min_indices = search_extremum(df_observe = df_observe.copy(), order = order)
-    fig = plot_df(df_observe.copy(), path = None, open_tab = False)
-    
-    for id in local_max_indices:
-        fig.add_annotation(
-            text='Local max',
-            x=df_observe.index[id + order],  # X-coordinate of the text box
-            y=df_observe.iloc[id + order,:]['HIGH'],  # Y-coordinate of the text box
-            showarrow=True,
-            arrowhead=1,
-            arrowcolor = 'red',
-            arrowside = 'end',
-            opacity = 1,
-            ax=0,
-            ay=-45,
-            font=dict(
-            family="Arial, sans-serif",
-            size=10,
-            color="red",
-            # bold=True
-            )
-        )
-    
-    for id in local_min_indices:
-        fig.add_annotation(
-            text='Local min',
-            x=df_observe.index[id + order],  # X-coordinate of the text box
-            y=df_observe.iloc[id + order,:]['LOW'],  # Y-coordinate of the text box
-            showarrow=True,
-            arrowhead=1,
-            arrowcolor = 'red',
-            arrowside = 'end',
-            opacity = 1,
-            ax=0,
-            ay=45,
-            font=dict(
-            family="Arial, sans-serif",
-            size=10,
-            color="red",
-            # bold=True
-            )
-        )
-    
     if path:
         # Write HTML output
         fig.write_html(path)
