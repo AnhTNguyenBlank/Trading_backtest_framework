@@ -10,6 +10,24 @@ plt.style.use('classic')
 from datetime import datetime, timedelta
 
 
+class Base_Asset:
+    def __init__(self, asset = 'XAUUSD'):
+        self.asset = asset
+        
+    def _cal_margins(self, margins_level):
+        '''
+        margins_level = 1/100 #1/200 #1/1000 #1/2000
+        '''
+        if self.asset == 'XAUUSD':
+            # Base stats
+            self.lot_per_asset = 0.01
+            self.base_price = 3000
+            
+            self.margin_per_asset = self.base_price * margins_level
+
+    def __str__(self):
+        return(f'XAUUSD requires ${self.margin_per_asset} as margin to buy {self.lot_per_asset} lot')
+
 
 class Backtest_report:
     def __init__(self, alpha, 
