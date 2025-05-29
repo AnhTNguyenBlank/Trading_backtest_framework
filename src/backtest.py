@@ -86,11 +86,11 @@ class Backtest_report:
             if len(df_temp) != 0:
                 df_result.loc[s.name, 'TIME_CLOSE_POSITION'] = df_temp.index[0]
             else:
-                df_result.loc[s.name, 'TIME_CLOSE_POSITION'] = None
+                df_result.loc[s.name, 'TIME_CLOSE_POSITION'] = pd.NaT
 
         signals = df_result[df_result['SIGNAL'] != 0]
         df_result['VOL'] = self.init_vol
-        df_result['FLAG_VALID_POSITION'] = 1
+        df_result['FLAG_VALID_POSITION'] = np.where(df_result['SIGNAL'] != 0, 1, 0)
 
 
         if self.max_existing_positions != None:
@@ -107,8 +107,8 @@ class Backtest_report:
                         existing_positions = existing_positions.iloc[1:, :]
                         existing_positions = pd.concat([existing_positions, pd.DataFrame(s).transpose()], axis = 0)
 
-            df_result['FLAG_VALID_POSITION'] = df_result['FLAG_VALID_POSITION'].fillna(1)
-
+        df_result['TIME_CLOSE_POSITION'] = np.where(df_result['FLAG_VALID_POSITION'] == 1, df_result['TIME_CLOSE_POSITION'], pd.NaT)
+        df_result['TIME_CLOSE_POSITION'] = pd.to_datetime(df_result['TIME_CLOSE_POSITION'])
 
         df_result = df_result.merge(df_result[['CLOSE']], 
                                                 how = 'left', 
@@ -121,6 +121,8 @@ class Backtest_report:
         df_result['PNL'] = np.where(df_result['PNL'] < self.base_SL*-1*(self.init_vol*100), self.base_SL*-1*(self.init_vol*100), 
                                     np.where(df_result['PNL'] > self.base_TP*(self.init_vol*100), self.base_TP*(self.init_vol*100), 
                                             np.where(df_result['PNL'].isnull() == True, 0, df_result['PNL'])))
+        df_result['PNL'] = np.where(df_result['FLAG_VALID_POSITION'] == 1, df_result['PNL'], 0)
+        
 
         # Calculate balance
         df_count = df_result.loc[(df_result['SIGNAL'] != 0) & (df_result['FLAG_VALID_POSITION'] == 1), 
