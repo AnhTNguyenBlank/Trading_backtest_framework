@@ -14,19 +14,13 @@ class Base_Asset:
     def __init__(self, asset = 'XAUUSD'):
         self.asset = asset
         
-    def _cal_margins(self, margins_level):
+    def _cal_margins(self):
         '''
         margins_level = 1/100 #1/200 #1/1000 #1/2000
         '''
         if self.asset == 'XAUUSD':
             # Base stats
             self.lot_per_asset = 0.01
-            self.base_price = 3000
-            
-            self.margin_per_asset = self.base_price * margins_level
-
-    def __str__(self):
-        return(f'XAUUSD requires ${self.margin_per_asset} as margin to buy {self.lot_per_asset} lot')
 
 
 class Backtest_report:
@@ -34,7 +28,8 @@ class Backtest_report:
                  df_is,
                  base_SL = 10, base_TP = 20, 
                  max_existing_positions = 3, init_vol = 0.01, incre_vol = 0.01, max_vol = 0.1,
-                 init_cap = 1000, incre_cap = 2, asset = 'XAUUSD', re_allocation = True
+                 init_cap = 1000, incre_cap = 2, asset = 'XAUUSD', margins_level = 1/100, 
+                 re_allocation = True
                  ):
         
         self.alpha = alpha # alpha class
@@ -45,7 +40,11 @@ class Backtest_report:
         self.max_vol = max_vol # max value of volume
         self.init_cap = init_cap # init capital
         self.incre_cap = incre_cap # the condition of capital if increasing the trading volume
-        self.asset = asset
+        
+        self.asset = Base_Asset(asset = asset)
+        self.asset._cal_margins()
+        self.margins_level = margins_level
+
         self.max_existing_positions = max_existing_positions
         self.base_SL = base_SL
         self.base_TP = base_TP    
@@ -72,12 +71,13 @@ class Backtest_report:
 
 
     def prepare_report(self):
-        df_signal_is = self.alpha.signal(self.df_is)
-        df_result_is = self.df_is.merge(df_signal_is, how = 'left', on = 'DATE_TIME')
-        df_result = df_result_is
-                
+        df_signal = self.alpha.signal(self.df_is)
+        df_result = self.df_is[['CLOSE']].merge(df_signal, how = 'left', on = 'DATE_TIME')
+        
+        df_result['VOL'] = self.init_vol
         signals = df_result[df_result['SIGNAL'] != 0]
 
+        # Determine the time hitting TP/ SL
         for ids in range(len(signals)):
             s = signals.iloc[ids, :]
             df_temp = df_result.loc[(df_result.index > s.name) 
@@ -89,23 +89,26 @@ class Backtest_report:
                 df_result.loc[s.name, 'TIME_CLOSE_POSITION'] = pd.NaT
 
         signals = df_result[df_result['SIGNAL'] != 0]
-        df_result['VOL'] = self.init_vol
+        
+        # Create the column to determine valid position (total number of positions, margins)
         df_result['FLAG_VALID_POSITION'] = np.where(df_result['SIGNAL'] != 0, 1, 0)
+        df_result['USED_MARGINS'] = df_result['VOL'] * np.abs(df_result['SIGNAL']) * self.margins_level * df_result['CLOSE'] / self.asset.lot_per_asset
 
 
-        if self.max_existing_positions != None:
-            existing_positions = signals[:self.max_existing_positions]
+        # Adjust the FLAG_VALID_POSITION according to max_existing_positions
+        existing_positions = signals[:self.max_existing_positions]
 
-            for ids in range(len(signals)):
-                if ids >= self.max_existing_positions:
-                    s = signals.iloc[ids, :]
+        for ids in range(len(signals)):
+            if ids >= self.max_existing_positions:
+                s = signals.iloc[ids, :]
 
-                    if s.name <= existing_positions['TIME_CLOSE_POSITION'].min():
-                        df_result.loc[s.name, 'FLAG_VALID_POSITION'] = 0
-                    else: 
-                        df_result.loc[s.name, 'FLAG_VALID_POSITION'] = 1
-                        existing_positions = existing_positions.iloc[1:, :]
-                        existing_positions = pd.concat([existing_positions, pd.DataFrame(s).transpose()], axis = 0)
+                if (s.name < existing_positions['TIME_CLOSE_POSITION'].min()) & (len(existing_positions) == self.max_existing_positions):
+                    df_result.loc[s.name, 'FLAG_VALID_POSITION'] = 0
+                else:
+                    df_result.loc[s.name, 'FLAG_VALID_POSITION'] = 1
+        
+                    existing_positions = existing_positions.loc[existing_positions['TIME_CLOSE_POSITION'] > s.name, :]
+                    existing_positions = pd.concat([existing_positions, pd.DataFrame(s).transpose()], axis = 0)
 
         df_result['TIME_CLOSE_POSITION'] = np.where(df_result['FLAG_VALID_POSITION'] == 1, df_result['TIME_CLOSE_POSITION'], pd.NaT)
         df_result['TIME_CLOSE_POSITION'] = pd.to_datetime(df_result['TIME_CLOSE_POSITION'])
@@ -147,9 +150,10 @@ class Backtest_report:
         df_balance['VOL'] = self.init_vol
         df_balance = self._cal_balance(df_balance)
         
-        self.df_result_is = df_result[df_result.index <= df_result_is.index[-1]] 
-        self.df_balance_is = df_balance[df_balance.index <= df_result_is.index[-1]] 
+        self.df_result_is = df_result.copy()
+        self.df_balance_is = df_balance.copy() 
 
+        # Reallocating the capital
         if self.re_allocation:
             idt = self.df_balance_is.index[0]
 
