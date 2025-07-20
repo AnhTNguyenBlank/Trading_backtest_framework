@@ -2,17 +2,7 @@ import pandas as pd
 import numpy as np
 
 pd.set_option('display.max_columns', 999)
-from scipy.stats import levy_stable
-
 from datetime import datetime
-from scipy.stats import kstest
-from scipy.stats import jarque_bera
-# from arch.unitroot import ADF
-from scipy.stats import kurtosis
-from scipy.stats import skew
-# from arch import arch_model
-
-import pickle
 
 import ta
 
@@ -22,23 +12,24 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import webbrowser
 
-from hyperopt import tpe, hp, fmin, STATUS_OK,Trials
-from hyperopt.pyll.base import scope
-
-from scipy.signal import argrelmin
-from scipy.signal import argrelmax
 
 plt.style.use('classic')
 
-
 import MetaTrader5 as mt
 import pandas as pd
-import ml_collections
-import yaml
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import time
+from bs4 import BeautifulSoup
+import requests
+from datetime import datetime, timedelta, timezone
 
-from datetime import datetime
-import pytz
-import sys
+from tqdm import tqdm
+import contextlib
+import os
 
 
 def prepare_df(df, timeframe, add_indicators):
@@ -663,4 +654,99 @@ def plot_positions_rt(trading_symbols, df_positions):
         return(fig)
     
 
+# =================================== Web scraping data (news) support =================================== #
 
+
+def set_up_driver(num_clicks, time_sleep_open):
+    '''
+    This function only supports the scraping from this site: "https://www.businesstoday.in/news".
+    It may support other sites but hadnot been tested on.
+    Includes progress bar.
+    '''
+    # Setup headless Chrome
+    options = Options()
+    options.headless = True
+    options.add_argument("--headless=new")
+    options.add_argument("--log-level=3")  # Only FATAL
+    options.add_argument("--disable-logging")
+    options.add_argument("--disable-dev-shm-usage")
+    # options.add_argument("--no-sandbox")
+    options.add_experimental_option("excludeSwitches", ["enable-logging"])
+
+    # Redirect stderr (to hide native logs from Chrome/TensorFlow/C++)
+    with open(os.devnull, 'w') as fnull, contextlib.redirect_stderr(fnull):
+        driver = webdriver.Chrome(options=options)
+
+    # Open the news page
+    driver.get("https://www.businesstoday.in/news")
+    time.sleep(time_sleep_open)  # Allow JS to load
+
+    # Click the "Load More" button multiple times
+    for _ in tqdm(range(num_clicks), desc="Loading more articles", unit = 'page'):  # Adjust range for more clicks
+        load_more_button = driver.find_element(By.ID, "load_more")
+        driver.execute_script("arguments[0].scrollIntoView();", load_more_button)
+        driver.execute_script("arguments[0].click();", load_more_button)
+        
+        # Wait until the spinner disappears, no matter how long it takes
+        WebDriverWait(driver, timeout=60).until(
+            EC.invisibility_of_element_located((By.CLASS_NAME, "circular_loader_container"))
+        )
+
+    return(driver)
+
+
+def extract_article_content(url):
+    '''
+    This function only supports the scraping from this site: "https://www.businesstoday.in/news".
+    It may support other sites but hadnot been tested on.
+    '''
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'html.parser')
+
+    # Extract the posted time of the article
+
+    user_section = soup.find('div', class_='userdetail_share_main')
+    if not user_section:
+        return{"time": None, "content": "❌ Content section not found."}
+
+    li_tag = user_section.find('li')
+    if not li_tag:
+        return{"time": None, "content": "❌ Content section not found."}
+    
+
+    raw_time = li_tag.get_text(strip=True)
+    time_str = raw_time.replace("Updated", "").replace("IST", "").replace(",", "").strip()
+    
+    try:
+        dt_naive = datetime.strptime(time_str, "%b %d %Y %I:%M %p")
+        IST = timezone(timedelta(hours=5, minutes=30))
+        GMT7 = timezone(timedelta(hours=7))
+        dt_ist = dt_naive.replace(tzinfo=IST)
+        dt_gmt7 = dt_ist.astimezone(GMT7)
+    except ValueError:
+        dt_naive = None
+        dt_gmt7 = None
+
+    
+    # Extract the main content of the page
+    main_div = soup.find('div', class_='story_witha_main_sec')
+    if not main_div:
+        return {"time": dt_gmt7, "content": "❌ Content section not found."}
+
+    text_div = main_div.find('div', class_='text-formatted')
+    if not text_div:
+        return {"time": dt_gmt7, "content": "❌ Text block not found."}
+    
+    # Get all non-empty <p> tags, skip ones inside ads, embeds
+    paragraphs = []
+    for p in text_div.find_all('p', recursive=True):
+        if p.find_parent(['div', 'iframe'], class_=['ads__container', 'story_ad_container', 'embedcode']):
+            continue  # skip ads or embeds
+        text = p.get_text(strip=True)
+        if text:
+            paragraphs.append(text)
+
+    
+    paragraphs = "\n\n".join(paragraphs)
+
+    return(dt_gmt7, paragraphs)
